@@ -1,8 +1,9 @@
 use std::{
     env,
     fs::{self, canonicalize},
+    io::Write,
     path::{absolute, PathBuf},
-    process::Command,
+    process::{Command, Stdio},
 };
 
 use log::info;
@@ -55,10 +56,6 @@ fn enter_virtual_environment() {
 
 fn set_up_environment(root: &str) {
     env::set_var("VIRTUAL_ENV", canonicalize(root).unwrap());
-    env::set_var(
-        "PYTHONPATH",
-        canonicalize(root.to_string() + "/lib/site-packages").unwrap(),
-    );
 }
 
 fn find_python_executable() -> &'static str {
@@ -95,4 +92,28 @@ fn virtual_environment_executable(name: &str) -> PathBuf {
     } else {
         panic!("Failed to find virtual environment bin directory");
     }
+}
+
+pub fn run_script(text: String) -> String {
+    enter_virtual_environment();
+
+    let mut command = Command::new(virtual_environment_executable("python"))
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::inherit())
+        .spawn()
+        .unwrap();
+
+    // This needs to be run from a separate thread to prevent deadlocks.
+    // If we tried to write it all on this thread, the program might (and probably would) try to write to stdout before everything had been written.
+    // This would require us to read from it, which we would not do until we had finished writing.
+    let mut stdin = command.stdin.take().expect("Failed to get stdin handle");
+    std::thread::spawn(move || {
+        stdin.write_all(text.as_bytes()).expect("Failed to write to stdin");
+    });
+
+    let output = command
+        .wait_with_output()
+        .expect("Failed to get output of command");
+    String::from_utf8(output.stdout).expect("Python generated non-UTF8 output")
 }
