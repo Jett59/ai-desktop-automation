@@ -10,7 +10,7 @@ fn main() {
 
     let ui = Ui::new();
     for child in ui.root().children() {
-        println!("{}", child.text_value());
+        println!("{:?}\n{}", child.node_type(), child.text_content());
     }
     let ai_context = AiContext::new();
     println!("{}", ai_context.text_query("What is the meaning of life?"));
