@@ -1,4 +1,4 @@
-use crate::python;
+use crate::{python, ui::{Ui, UiNode}};
 
 pub struct AiContext {}
 
@@ -25,5 +25,21 @@ print(result.text)
         "#
             .replace("{query}", &text.replace("'", "\\'")),
         )
+    }
+}
+
+struct UiInfo<'a> {
+    current_focus: UiNode<'a>,
+    ancestors: Vec<UiNode<'a>>,
+    windows: Vec<UiNode<'a>>,
+}
+
+impl<'a> UiInfo<'a> {
+    fn new(ui: &'a Ui) -> Self {
+        Self {
+            current_focus: ui.current_focus(),
+            ancestors: ui.current_focus().ancestors(),
+            windows: ui.root().children(),
+        }
     }
 }

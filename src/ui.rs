@@ -3,23 +3,25 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use windows::{
     core::Interface,
     Win32::{
-        System::Com::{CoCreateInstance, CoInitialize, CoUninitialize, CLSCTX_INPROC_SERVER}, UI::Accessibility::{
+        System::Com::{CoCreateInstance, CoInitialize, CoUninitialize, CLSCTX_INPROC_SERVER},
+        UI::Accessibility::{
             CUIAutomation, IUIAutomation, IUIAutomationElement, IUIAutomationTextPattern,
-            IUIAutomationValuePattern, TreeScope_Children, TreeScope_Descendants,
-            UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId, UIA_ComboBoxControlTypeId,
-            UIA_DataGridControlTypeId, UIA_DataItemControlTypeId, UIA_DocumentControlTypeId,
-            UIA_EditControlTypeId, UIA_GroupControlTypeId, UIA_HeaderControlTypeId,
-            UIA_HeaderItemControlTypeId, UIA_HyperlinkControlTypeId, UIA_ImageControlTypeId,
-            UIA_ListControlTypeId, UIA_ListItemControlTypeId, UIA_MenuBarControlTypeId,
-            UIA_MenuControlTypeId, UIA_MenuItemControlTypeId, UIA_PaneControlTypeId,
-            UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId, UIA_ScrollBarControlTypeId,
-            UIA_SeparatorControlTypeId, UIA_SliderControlTypeId, UIA_SpinnerControlTypeId,
-            UIA_SplitButtonControlTypeId, UIA_StatusBarControlTypeId, UIA_TabControlTypeId,
-            UIA_TabItemControlTypeId, UIA_TableControlTypeId, UIA_TextControlTypeId,
-            UIA_TextPatternId, UIA_TitleBarControlTypeId, UIA_ToolBarControlTypeId,
-            UIA_ToolTipControlTypeId, UIA_TreeControlTypeId, UIA_TreeItemControlTypeId,
-            UIA_ValuePatternId, UIA_WindowControlTypeId, UIA_CONTROLTYPE_ID,
-        }
+            IUIAutomationValuePattern, TreeScope, TreeScope_Ancestors, TreeScope_Children,
+            TreeScope_Descendants, UIA_ButtonControlTypeId, UIA_CheckBoxControlTypeId,
+            UIA_ComboBoxControlTypeId, UIA_DataGridControlTypeId, UIA_DataItemControlTypeId,
+            UIA_DocumentControlTypeId, UIA_EditControlTypeId, UIA_GroupControlTypeId,
+            UIA_HeaderControlTypeId, UIA_HeaderItemControlTypeId, UIA_HyperlinkControlTypeId,
+            UIA_ImageControlTypeId, UIA_ListControlTypeId, UIA_ListItemControlTypeId,
+            UIA_MenuBarControlTypeId, UIA_MenuControlTypeId, UIA_MenuItemControlTypeId,
+            UIA_PaneControlTypeId, UIA_ProgressBarControlTypeId, UIA_RadioButtonControlTypeId,
+            UIA_ScrollBarControlTypeId, UIA_SeparatorControlTypeId, UIA_SliderControlTypeId,
+            UIA_SpinnerControlTypeId, UIA_SplitButtonControlTypeId, UIA_StatusBarControlTypeId,
+            UIA_TabControlTypeId, UIA_TabItemControlTypeId, UIA_TableControlTypeId,
+            UIA_TextControlTypeId, UIA_TextPatternId, UIA_TitleBarControlTypeId,
+            UIA_ToolBarControlTypeId, UIA_ToolTipControlTypeId, UIA_TreeControlTypeId,
+            UIA_TreeItemControlTypeId, UIA_ValuePatternId, UIA_WindowControlTypeId,
+            UIA_CONTROLTYPE_ID,
+        },
     },
 };
 
@@ -50,6 +52,18 @@ impl Ui {
             ui: self,
             inner: self.root.clone(),
             node_type: get_node_type(unsafe { self.root.CurrentControlType().unwrap() }),
+        }
+    }
+
+    pub fn current_focus(&self) -> UiNode {
+        unsafe {
+            let focused_element = self.uia_handle.GetFocusedElement().unwrap();
+            let node_type = get_node_type(focused_element.CurrentControlType().unwrap());
+            UiNode {
+                ui: self,
+                inner: focused_element,
+                node_type,
+            }
         }
     }
 }
@@ -154,29 +168,41 @@ pub struct UiNode<'a> {
     node_type: NodeType,
 }
 
-impl UiNode<'_> {
-    pub fn children(&self) -> Vec<UiNode> {
+impl<'a> UiNode<'a> {
+    fn find_all(&self, scope: TreeScope) -> Vec<UiNode<'a>> {
         unsafe {
-            let children = self
+            let nodes = self
                 .inner
                 .FindAll(
-                    TreeScope_Children,
+                    scope,
                     Some(&self.ui.uia_handle.CreateTrueCondition().unwrap()),
                 )
                 .unwrap();
 
-            let mut result = Vec::with_capacity(children.Length().unwrap() as usize);
-            for i in 0..children.Length().unwrap() {
-                let child = children.GetElement(i).unwrap();
-                let node_type = get_node_type(child.CurrentControlType().unwrap());
+            let mut result = Vec::with_capacity(nodes.Length().unwrap() as usize);
+            for i in 0..nodes.Length().unwrap() {
+                let node = nodes.GetElement(i).unwrap();
+                let node_type = get_node_type(node.CurrentControlType().unwrap());
                 result.push(UiNode {
                     ui: self.ui,
-                    inner: child,
+                    inner: node,
                     node_type,
                 });
             }
             result
         }
+    }
+
+    pub fn children(&self) -> Vec<UiNode<'a>> {
+        self.find_all(TreeScope_Children)
+    }
+
+    pub fn descendants(&self) -> Vec<UiNode<'a>> {
+        self.find_all(TreeScope_Descendants)
+    }
+
+    pub fn ancestors(&self) -> Vec<UiNode<'a>> {
+        self.find_all(TreeScope_Ancestors)
     }
 
     pub fn name(&self) -> String {
@@ -210,32 +236,16 @@ impl UiNode<'_> {
 
     /// Finds the text value of all content components from all descendants of this component.
     pub fn text_content(&self) -> String {
-        let mut result = String::new();
-        unsafe {
-            let descendants = self
+        self.descendants().into_iter().filter(|descendant| unsafe {
+            descendant
                 .inner
-                .FindAll(
-                    TreeScope_Descendants,
-                    Some(&self.ui.uia_handle.CreateTrueCondition().unwrap()),
-                )
-                .unwrap();
-            for i in 0..descendants.Length().unwrap() {
-                let descendant = descendants.GetElement(i).unwrap();
-                if descendant.CurrentIsContentElement().unwrap().as_bool() {
-                    let descendant_type = get_node_type(descendant.CurrentControlType().unwrap());
-                    let text_content = UiNode {
-                        ui: self.ui,
-                        inner: descendant,
-                        node_type: descendant_type,
-                    }
-                    .text_value();
-                    if !text_content.is_empty() {
-                        result = result + "\n" + &text_content;
-                    }
-                }
-            }
-        }
-        result
+                .CurrentIsContentElement()
+                .unwrap()
+                .as_bool()
+        })
+        .map(|descendant|descendant.text_value())
+        .reduce(|a, b|format!("{}\n{}", a, b))
+        .unwrap_or(String::new())
     }
 
     pub fn node_type(&self) -> NodeType {
